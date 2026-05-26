@@ -1,0 +1,107 @@
+diff --git a/bot.py b/bot.py
+--- a/bot.py
++++ b/bot.py
+@@
+ @bot.tree.command(name="zonerange")
+ async def zone_range_cmd(i: discord.Interaction, name: str, distance: int):
+     if not is_owner_or_admin(i):
+         return await i.response.send_message("คำสั่งนี้สำหรับผู้ดูแลระบบเท่านั้น", ephemeral=True)
+     zones = get_zone_map(i.guild_id)
+     zone = zones.get(name.strip())
+     if not zone:
+         return await i.response.send_message(f"ไม่พบโซน **{name}**", ephemeral=True)
+     zone['range'] = distance
+     save_data()
+     await i.response.send_message(f"ตั้งค่าระยะไมค์ของโซน **{name}** เป็น **{distance}** บล็อกแล้ว", ephemeral=True)
++
++@bot.tree.command(name="create_vc", description="สร้างห้องเสียงหลายห้องในหมวดหมู่ที่เลือกแบบอัตโนมัติ")
++@app_commands.describe(
++    category="หมวดหมู่ที่จะเพิ่มห้องเสียง",
++    amount="จำนวนห้องเสียงที่จะสร้าง เพิ่มได้สูงสุดครั้งละ 50 ห้อง"
++)
++async def create_vc(i: discord.Interaction, category: discord.CategoryChannel, amount: app_commands.Range[int, 1, 50]):
++    if not is_owner_or_admin(i):
++        return await i.response.send_message("คำสั่งนี้สำหรับผู้ดูแลระบบเท่านั้น", ephemeral=True)
++
++    await i.response.defer(ephemeral=True)
++
++    bot_member = i.guild.me or i.guild.get_member(bot.user.id)
++    if not bot_member or not category.permissions_for(bot_member).manage_channels:
++        return await i.followup.send("บอทไม่มีสิทธิ์ Manage Channels ในหมวดหมู่นี้", ephemeral=True)
++
++    requested = int(amount)
++    category_limit = 50
++    available_slots = max(0, category_limit - len(category.channels))
++    if available_slots <= 0:
++        return await i.followup.send("หมวดหมู่นี้มีช่องครบ 50 ช่องแล้ว ไม่สามารถสร้างเพิ่มได้", ephemeral=True)
++
++    total_to_create = min(requested, available_slots)
++    if total_to_create < requested:
++        await i.followup.send(
++            f"หมวดหมู่นี้เหลือพื้นที่อีก **{available_slots}** ช่อง จึงจะสร้างให้ได้เท่านี้จากที่ขอ **{requested}** ห้อง",
++            ephemeral=True
++        )
++
++    delay_seconds = 2.5
++    existing_names = {ch.name for ch in category.channels}
++    next_number = 1
++
++    def next_channel_name():
++        nonlocal next_number
++        while True:
++            name = f"ห้องพูดคุย {next_number:02d}"
++            next_number += 1
++            if name not in existing_names:
++                existing_names.add(name)
++                return name
++
++    created_channels = []
++    failed_error = None
++
++    await i.edit_original_response(content=f"กำลังสร้างห้องเสียง... 0/{total_to_create}")
++
++    for index in range(total_to_create):
++        channel_name = next_channel_name()
++        try:
++            channel = await category.create_voice_channel(
++                name=channel_name,
++                reason=f"/create_vc by {i.user} ({i.user.id})"
++            )
++            created_channels.append(channel)
++        except discord.Forbidden:
++            failed_error = "บอทไม่มีสิทธิ์สร้างห้องเสียง หรือ role ของบอทอยู่ต่ำเกินไป"
++            break
++        except discord.HTTPException as e:
++            failed_error = f"Discord API error: {e}"
++            break
++        except Exception as e:
++            failed_error = f"เกิดข้อผิดพลาด: {e}"
++            break
++
++        if len(created_channels) % 5 == 0 or index == total_to_create - 1:
++            try:
++                await i.edit_original_response(content=f"กำลังสร้างห้องเสียง... {len(created_channels)}/{total_to_create}")
++            except Exception:
++                pass
++
++        if index < total_to_create - 1:
++            await asyncio.sleep(delay_seconds)
++
++    created_mentions = ", ".join(ch.mention for ch in created_channels[:10])
++    if len(created_channels) > 10:
++        created_mentions += f" และอีก {len(created_channels) - 10} ห้อง"
++
++    result = (
++        f"สร้างห้องเสียงในหมวด **{category.name}** สำเร็จ **{len(created_channels)}/{total_to_create}** ห้อง\n"
++        f"ดีเลย์ระหว่างสร้าง: **{delay_seconds} วินาที/ห้อง**"
++    )
++    if created_mentions:
++        result += f"\nห้องที่สร้าง: {created_mentions}"
++    if failed_error:
++        result += f"\n\nหยุดกลางทางเพราะ: {failed_error}"
++
++    await i.edit_original_response(content=result)
+ 
+ @bot.tree.command(name="test")
+ async def test_mode(interaction: discord.Interaction):
+     if not interaction.response.is_done(): await interaction.response.defer(ephemeral=True)
